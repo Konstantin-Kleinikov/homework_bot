@@ -14,7 +14,7 @@ RETRY_PERIOD = 600  # в секундах
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
-NUM_DAYS_AGO = 2  # в днях
+NUM_DAYS_AGO = 1  # в днях
 
 HOMEWORKS_KEY = 'homeworks'
 HOMEWORK_NAME_KEY = 'homework_name'
@@ -39,3 +39,7 @@ ENDPOINT_NOT_AVAILABLE_ERROR = (
 PROGRAM_ERROR = 'Сбой в работе программы: {error}'
 
 HOMEWORK_STATUS_NOT_CHANGED = 'Статус проверки задания не изменился.'
+
+HOMEWORK_VERDICT_WAS_CHANGED = ('Изменился статус проверки работы '
+                                '"{homework_name}". {verdict}'
+                                )

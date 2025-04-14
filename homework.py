@@ -12,9 +12,10 @@ from telebot import TeleBot
 from constants import (ENDPOINT, ENDPOINT_NOT_AVAILABLE_ERROR,
                        ENV_VARIABLE_NOT_FOUND_ERROR, HEADERS,
                        HOMEWORK_NAME_KEY, HOMEWORK_STATUS_NOT_CHANGED,
-                       HOMEWORK_VERDICTS, HOMEWORKS_KEY, NUM_DAYS_AGO,
-                       PRACTICUM_TOKEN, PROGRAM_ERROR, RETRY_PERIOD,
-                       STATUS_KEY, TELEGRAM_CHAT_ID, TELEGRAM_TOKEN)
+                       HOMEWORK_VERDICT_WAS_CHANGED, HOMEWORK_VERDICTS,
+                       HOMEWORKS_KEY, NUM_DAYS_AGO, PRACTICUM_TOKEN,
+                       PROGRAM_ERROR, RETRY_PERIOD, STATUS_KEY,
+                       TELEGRAM_CHAT_ID, TELEGRAM_TOKEN)
 from exeptions import (EndpointNotAvailableError, EnvVariableNotFoundError,
                        HomeworkNameNotFoundError, HomeworkNotFoundError,
                        HomeworkStatusNotFoundError,
@@ -28,12 +29,14 @@ def check_tokens():
         'TELEGRAM_TOKEN': TELEGRAM_TOKEN,
         'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID
     }
+    errors = []
     for name, value in env_variables.items():
         if not value:
-            logging.critical(ENV_VARIABLE_NOT_FOUND_ERROR.format(name=name))
-            raise EnvVariableNotFoundError(
-                ENV_VARIABLE_NOT_FOUND_ERROR.format(name=name)
-            )
+            error_message = ENV_VARIABLE_NOT_FOUND_ERROR.format(name=name)
+            logging.critical(error_message)
+            errors.append(error_message)
+    if errors:
+        raise EnvVariableNotFoundError('\n'.join(errors))
 
 
 def send_message(bot, message) -> bool:
@@ -48,7 +51,6 @@ def send_message(bot, message) -> bool:
             telebot.apihelper.ApiException,
     ) as error:
         logging.error(f'Ошибка при отправке сообщения телеграмм боту: {error}')
-        raise
         return False
 
 
@@ -72,11 +74,7 @@ def get_api_answer(timestamp: int):
             f'Ошибка при обращении к API сервису Практикум.Домашка: {error}'
         )
         raise EndpointNotAvailableError(
-            ENDPOINT_NOT_AVAILABLE_ERROR.format(
-                status_code=api_response.status_code,
-                reason=api_response.reason,
-                endpoint=ENDPOINT,
-            )
+            f'Ошибка при обращении к API: {error}'
         ) from error
 
     if api_response.status_code != HTTPStatus.OK:
@@ -87,6 +85,8 @@ def get_api_answer(timestamp: int):
                 endpoint=ENDPOINT,
             )
         )
+    logging.info(f'Получен ответ от API: {api_response},'
+                 '{url}, {headers}, {params}'.format(**request_details))
     return api_response.json()
 
 
@@ -118,8 +118,7 @@ def parse_status(homework):
     if status not in HOMEWORK_VERDICTS:
         raise UnexpectedHomeworkStatusError(
             f'В ответе от ({ENDPOINT}) получен статус '
-            f'{status},'
-            'который не может быть обработан!'
+            f'{status}, который не может быть обработан!'
         )
     homework_name = homework.get(HOMEWORK_NAME_KEY)
     if not homework_name:
@@ -127,7 +126,12 @@ def parse_status(homework):
             f'Не найдено содержимое ключа {HOMEWORK_NAME_KEY}!'
         )
     verdict = HOMEWORK_VERDICTS.get(status)
-    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
+    logged_message = HOMEWORK_VERDICT_WAS_CHANGED.format(
+        homework_name=homework_name,
+        verdict=verdict,
+    )
+    logging.info(logged_message)
+    return logged_message
 
 
 def get_timestamp(days_ago: int) -> int:
