@@ -1,25 +1,25 @@
 """Исключения для приложения homework_bot."""
 
 
-class EndpointNotAvailable(Exception):
-    pass
+class EndpointNotAvailableError(Exception):
+    """API endpoint не вернул ответ при обращении к нему."""
 
 
-class HomeworkNotFound(Exception):
-    pass
+class HomeworkNotFoundError(KeyError):
+    """В полученном ответе не найден ключ homeworks."""
 
 
-class HomeworkStatusNotFound(Exception):
-    pass
+class HomeworkStatusNotFoundError(Exception):
+    """В полученном ответе не найден ключ status."""
 
 
-class HomeworkResponseEmpty(Exception):
-    pass
+class UnexpectedHomeworkStatusError(Exception):
+    """В полученном ответе найдено необрабатываемое значение ключа status."""
 
 
-class UnexpectedHomeworkStatus(Exception):
-    pass
+class HomeworkNameNotFoundError(Exception):
+    """В полученном ответе не найден ключ homework_name."""
 
 
-class HomeworkNameNotFound(Exception):
-    pass
+class EnvVariableNotFoundError(Exception):
+    """Переменная окружения не найдена."""

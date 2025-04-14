@@ -6,18 +6,22 @@ from datetime import datetime, timedelta
 from http import HTTPStatus
 
 import requests
+import telebot
 from telebot import TeleBot
 
-from constants import (ENDPOINT, HEADERS, HOMEWORK_NAME_KEY, HOMEWORK_VERDICTS,
-                       HOMEWORKS_KEY, NUM_DAYS_AGO, PRACTICUM_TOKEN,
-                       RETRY_PERIOD, STATUS_KEY, TELEGRAM_CHAT_ID,
-                       TELEGRAM_TOKEN)
-from exeptions import (EndpointNotAvailable, HomeworkNameNotFound,
-                       HomeworkNotFound, HomeworkResponseEmpty,
-                       HomeworkStatusNotFound, UnexpectedHomeworkStatus)
+from constants import (ENDPOINT, ENDPOINT_NOT_AVAILABLE_ERROR,
+                       ENV_VARIABLE_NOT_FOUND_ERROR, HEADERS,
+                       HOMEWORK_NAME_KEY, HOMEWORK_STATUS_NOT_CHANGED,
+                       HOMEWORK_VERDICTS, HOMEWORKS_KEY, NUM_DAYS_AGO,
+                       PRACTICUM_TOKEN, PROGRAM_ERROR, RETRY_PERIOD,
+                       STATUS_KEY, TELEGRAM_CHAT_ID, TELEGRAM_TOKEN)
+from exeptions import (EndpointNotAvailableError, EnvVariableNotFoundError,
+                       HomeworkNameNotFoundError, HomeworkNotFoundError,
+                       HomeworkStatusNotFoundError,
+                       UnexpectedHomeworkStatusError)
 
 
-def check_tokens() -> bool:
+def check_tokens():
     """Проверка присутствия и заполнения переменных окружения."""
     env_variables = {
         'PRACTICUM_TOKEN': PRACTICUM_TOKEN,
@@ -26,40 +30,64 @@ def check_tokens() -> bool:
     }
     for name, value in env_variables.items():
         if not value:
-            logging.critical(f'Переменная окружения {name} не установлена.')
-            raise ValueError(f'Переменная окружения {name} не установлена.')
-    return True
+            logging.critical(ENV_VARIABLE_NOT_FOUND_ERROR.format(name=name))
+            raise EnvVariableNotFoundError(
+                ENV_VARIABLE_NOT_FOUND_ERROR.format(name=name)
+            )
 
 
-def send_message(bot, message):
+def send_message(bot, message) -> bool:
     """Отправляет сообщение телеграм боту."""
-    result = bot.send_message(TELEGRAM_CHAT_ID, message)
-    logging.debug('Успешно отправлено сообщение: '
-                  f'{message} на id чата {TELEGRAM_CHAT_ID}.')
-    return result
+    try:
+        bot.send_message(TELEGRAM_CHAT_ID, message)
+        logging.debug('Успешно отправлено сообщение: '
+                      f'{message} на id чата {TELEGRAM_CHAT_ID}.')
+        return True
+    except (
+            requests.exceptions.RequestException,
+            telebot.apihelper.ApiException,
+    ) as error:
+        logging.error(f'Ошибка при отправке сообщения телеграмм боту: {error}')
+        raise
+        return False
 
 
 def get_api_answer(timestamp: int):
-    """Обращается с запросом к API сервиса Практикум.Домашка."""
+    """Обращается с запросом к API сервису Практикум.Домашка."""
     payload = {'from_date': timestamp}
+    request_details = {
+        'url': ENDPOINT,
+        'headers': HEADERS,
+        'params': payload
+    }
     try:
-        api_response = requests.get(
-            ENDPOINT,
-            headers=HEADERS,
-            params=payload
+        logging.info(
+            'Начало запроса к API: {url}, '
+            'заголовки: {headers}, параметры: {params}'
+            .format(**request_details)
         )
-        if api_response.status_code != HTTPStatus.OK:
-            raise EndpointNotAvailable(
-                f'Ошибка при запросе к API: {api_response.status_code} '
-                f'{api_response.reason}. '
-                f'Проверьте корректность ENDPOINT ({ENDPOINT}) '
-                'и параметры запроса.'
-            )
-        return api_response.json()
+        api_response = requests.get(**request_details)
     except requests.exceptions.RequestException as error:
-        raise EndpointNotAvailable(
-            f'Ошибка при запросе к API: {error}'
+        logging.error(
+            f'Ошибка при обращении к API сервису Практикум.Домашка: {error}'
+        )
+        raise EndpointNotAvailableError(
+            ENDPOINT_NOT_AVAILABLE_ERROR.format(
+                status_code=api_response.status_code,
+                reason=api_response.reason,
+                endpoint=ENDPOINT,
+            )
         ) from error
+
+    if api_response.status_code != HTTPStatus.OK:
+        raise EndpointNotAvailableError(
+            ENDPOINT_NOT_AVAILABLE_ERROR.format(
+                status_code=api_response.status_code,
+                reason=api_response.reason,
+                endpoint=ENDPOINT,
+            )
+        )
+    return api_response.json()
 
 
 def check_response(response):
@@ -70,8 +98,8 @@ def check_response(response):
             f'но получен объект типа {type(response).__name__}.'
         )
     homeworks = response.get(HOMEWORKS_KEY)
-    if not homeworks:
-        raise HomeworkNotFound(
+    if HOMEWORKS_KEY not in response:
+        raise HomeworkNotFoundError(
             f'Не найден ключ {HOMEWORKS_KEY} в ответе от ({ENDPOINT})!'
         )
     if not isinstance(homeworks, list):
@@ -79,31 +107,25 @@ def check_response(response):
             f'Ожидался список в ключе {HOMEWORKS_KEY}, '
             f'но получен объект типа {type(homeworks).__name__}.'
         )
-    if not homeworks[0]:
-        raise HomeworkResponseEmpty(
-            f'В ответе от ({ENDPOINT}) содержимое ключа'
-            f'{HOMEWORKS_KEY} не найдено!'
-        )
-    return homeworks[0]
+    return homeworks
 
 
 def parse_status(homework):
     """Анализирует статус проверки домашнего задания."""
     status = homework.get(STATUS_KEY)
     if not status:
-        raise HomeworkStatusNotFound('Статус проверки задания не изменился.')
+        raise HomeworkStatusNotFoundError('Статус проверки задания не найден.')
     if status not in HOMEWORK_VERDICTS:
-        raise UnexpectedHomeworkStatus(
+        raise UnexpectedHomeworkStatusError(
             f'В ответе от ({ENDPOINT}) получен статус '
             f'{status},'
             'который не может быть обработан!'
         )
     homework_name = homework.get(HOMEWORK_NAME_KEY)
     if not homework_name:
-        raise HomeworkNameNotFound(
+        raise HomeworkNameNotFoundError(
             f'Не найдено содержимое ключа {HOMEWORK_NAME_KEY}!'
         )
-    homework_name = homework.get(HOMEWORK_NAME_KEY)
     verdict = HOMEWORK_VERDICTS.get(status)
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
@@ -117,35 +139,38 @@ def get_timestamp(days_ago: int) -> int:
 
 def main():
     """Основная логика работы бота."""
+    check_tokens()
+    starting_from = get_timestamp(NUM_DAYS_AGO)
+    bot = TeleBot(token=TELEGRAM_TOKEN)
+    last_message = None
+    while True:
+        try:
+            response = get_api_answer(starting_from)
+            homeworks = check_response(response)
+            if not homeworks:
+                logging.debug(HOMEWORK_STATUS_NOT_CHANGED)
+                continue
+            if send_message(bot, parse_status(homeworks[0])):
+                last_message = None
+                starting_from = response.get('current_date', starting_from)
+        except Exception as error:
+            logging.error(PROGRAM_ERROR.format(error=error))
+            if (error != last_message and send_message(
+                    bot, PROGRAM_ERROR.format(error=error)
+            )
+            ):
+                last_message = error
+        finally:
+            time.sleep(RETRY_PERIOD)
+
+
+if __name__ == '__main__':
     logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - '
+               '%(filename)s->%(funcName)s:%(lineno)d, - %(message)s',
         level=logging.INFO,
         handlers=[
             logging.StreamHandler(sys.stdout)
         ]
     )
-    if check_tokens():
-        starting_from = get_timestamp(NUM_DAYS_AGO)
-        bot = TeleBot(token=TELEGRAM_TOKEN)
-        sent_errors = set()
-        while True:
-            try:
-                cleaned_response = get_api_answer(starting_from)
-                homework = check_response(cleaned_response)
-                status_message = parse_status(homework)
-                send_message(bot, status_message)
-                sent_errors.clear()
-            except (EndpointNotAvailable, HomeworkNotFound,
-                    HomeworkResponseEmpty, UnexpectedHomeworkStatus,
-                    HomeworkNameNotFound) as error:
-                if str(error) not in sent_errors:
-                    send_message(bot, error)
-                    sent_errors.add(str(error))
-                logging.error(error)
-            except Exception as error:
-                logging.error(f'Сбой в работе программы: {error}')
-            finally:
-                time.sleep(RETRY_PERIOD)
-
-
-if __name__ == '__main__':
     main()
